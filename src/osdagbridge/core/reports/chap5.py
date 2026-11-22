@@ -3,6 +3,9 @@
 # Extracted from report_generator.py — DO NOT add business logic here.
 # =============================================================================
 from __future__ import annotations
+import os
+import re
+from osdagbridge.core.reports import charts
 from typing import TYPE_CHECKING
 
 from osdagbridge.core.utils.common import (
@@ -145,7 +148,7 @@ from osdagbridge.core.reports.report_utils import _tex, _render_value, get_girde
 
 if TYPE_CHECKING:
     pass
-def ch5_design_checks(checks_data, bridge) -> str:
+def ch5_design_checks(checks_data, bridge, chart_dir=None) -> str:
     """Chapter 5 — Design Checks.
 
     Parameters
@@ -975,8 +978,27 @@ Fatigue Shear Resistance, $Q_r$ & IRC 22 Table 8 ($\phi d$, $N_{sc}$) & """
         ratio, sf, lim = best
         return ("---", f"{sf:.1f}", f"{lim:.0f}", _ur_522(ratio))
 
+    _ur_items = []   # (group, short label, UR) collected for the Section 5.5 chart
+
+    def _ur_group(label):
+        l = label.strip()
+        if l.startswith("Girder"):
+            return "Steel Plate Girders"
+        if l.startswith("Deck") or "(slab)" in l:
+            return "Concrete Deck Slab"
+        if l.startswith("Cross Bracing"):
+            return "Cross Bracing"
+        if l.startswith("End Diaphragm"):
+            return "End Diaphragms"
+        return "Steel Plate Girders"
+
     def _row522(label, cells):
         c = [x if x else "---" for x in cells]
+        # last cell is the UR (possibly wrapped in \\textcolor{red}{..}); keep a plain copy
+        m = re.search(r"([0-9]+\.[0-9]+)", c[-1])
+        if m:
+            short = label.split(" --- ")[-1].replace("(slab)", "").strip()
+            _ur_items.append((_ur_group(label), short.replace("\\", ""), float(m.group(1))))
         return label + r" & " + r" & ".join(c) + r" \\[6pt]" + "\n\\hline"
 
     # Deck rows: Demand/Capacity from deck_report_values (KEY_DD_*, the same dict
@@ -1064,6 +1086,18 @@ Fatigue Shear Resistance, $Q_r$ & IRC 22 Table 8 ($\phi d$, $N_{sc}$) & """
         _ed_shear_row,
     ]
     t522_content = "\n".join(_t522)
+
+    # Section 5.5 chart: UR of all primary members with a UR = 1.0 threshold line.
+    _ur_chart_tex = ""
+    if chart_dir:
+        try:
+            if charts.ur_summary_chart(_ur_items, os.path.join(chart_dir, "ur_summary.png")):
+                _ur_chart_tex = charts.figure_tex(
+                    "charts/ur_summary.png",
+                    "Utilization Ratio (Demand / Capacity) of primary members. "
+                    "The red dashed line marks UR = 1.0; bars above it fail the check.")
+        except Exception:   # a chart problem must never break the report
+            _ur_chart_tex = ""
 
     return r"""
 \chapter{Design Checks}
@@ -1500,6 +1534,7 @@ End diaphragms at the supports transfer transverse loads to the bearings, restra
 """ + t522_content + r"""
 \end{longtable}
 \noindent\textit{Note: UR = Demand / Capacity. All values $\leq 1.0$ indicate passing checks. The governing check for each component is highlighted in the individual design check sections above.}
+""" + _ur_chart_tex + r"""
 
 """
 

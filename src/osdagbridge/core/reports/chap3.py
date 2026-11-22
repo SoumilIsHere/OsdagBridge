@@ -55,6 +55,82 @@ from osdagbridge.core.utils.common import (
 
 from osdagbridge.core.reports.report_utils import _tex, _render_value
 
+from osdagbridge.core.reports.latex_utils import make_longtable
+
+
+def _live_load_tables(input_dict, vehicles):
+    """Chapter 3 live-load tables, kept separate (vehicle / associated effects /
+    footpath) and each with a Unit and IRC clause column.  Vehicles shown are
+    exactly those ticked in the UI (Additional Inputs -> Loading -> Live Load)."""
+    from osdagbridge.core.utils.codes.irc6_2017 import IRC6_2017
+
+    span = input_dict.get(KEY_SPAN)
+    try:
+        span_m = float(span)
+    except (TypeError, ValueError):
+        span_m = None
+
+    def _impact(name):
+        if span_m is None:
+            return "N/A"
+        try:
+            if name == "Class A":
+                return f"{1.0 + IRC6_2017.cl_208_2_impact_factor(span_m):.3f}"
+            if name.startswith(("Class 70R", "Class AA")):
+                return f"{1.0 + IRC6_2017.cl_208_3_impact_factor(span_m):.3f}"
+        except Exception:
+            return "N/A"
+        return "---"            # SV / fatigue / user-defined: no IRC 6 Cl. 208 factor
+
+    # (a) vehicular live loads -------------------------------------------------
+    veh_rows = []
+    for i, name in enumerate(vehicles, 1):
+        clause = "IRC 6 Cl. 204.1, 208" if name.startswith(("Class A", "Class 70R", "Class AA")) else "IRC 6 Cl. 204"
+        veh_rows.append([str(i), _tex(name), _tex(_impact(name)), "---", _tex(clause)])
+    if not veh_rows:
+        veh_rows = [["---", "None selected", "---", "---", "---"]]
+    t_vehicle = make_longtable(
+        "|C{1.2cm}|L{5.4cm}|C{4.2cm}|L{4.4cm}|",
+        ["S.N.", "Vehicle Class", "Impact Factor (1+IM), dimensionless", "Reference"],
+        [[a, b, c, e] for a, b, c, _, e in veh_rows],
+        caption="Live Loads (LL) --- Vehicular Loading")
+
+    # (b) associated effects ---------------------------------------------------
+    lanes = input_dict.get(KEY_WC_LD_LANE_TABLE_COUNT)
+    try:
+        t = IRC6_2017.cl_211_2_braking_force(int(lanes))
+        braking = f"{t * 9.81:.2f}"
+        braking_note = f"for {int(lanes)} lane(s) ({t:.2f} t)"
+    except Exception:
+        braking, braking_note = "N/A", ""
+    t_assoc = make_longtable(
+        "|L{4.8cm}|C{3.2cm}|C{2.0cm}|L{5.0cm}|",
+        ["Parameter", "Value", "Unit", "Reference / Remark"],
+        [[r"\textnormal{Braking Load}", _tex(braking), "kN", _tex("IRC 6 Cl. 211.2 " + braking_note).strip()],
+         [r"\textnormal{Centrifugal Force}", "N/A", "kN", _tex("IRC 6 Cl. 209.1; straight span, not applicable")]],
+        caption="Live Loads (LL) --- Associated Effects")
+
+    # (c) footpath ---------------------------------------------------------------
+    fp_mode = input_dict.get(KEY_LL_FOOTPATH_PRESSURE_MODE, "")
+    fp_value = input_dict.get(KEY_LL_FOOTPATH_PRESSURE_VALUE, "")
+    if str(fp_mode).strip().lower() in ("as per irc 6", "as per irc6", "automatic"):
+        try:
+            fp_val, fp_ref = f"{IRC6_2017.cl_206_1_footway_load():.3f}", "IRC 6 Cl. 206.1"
+        except Exception:
+            fp_val, fp_ref = "N/A", "IRC 6 Cl. 206.1"
+    elif fp_value not in (None, ""):
+        fp_val, fp_ref = _tex(fp_value), "User defined"
+    else:
+        fp_val, fp_ref = "N/A", "Footpath not provided"
+    t_foot = make_longtable(
+        "|L{4.8cm}|C{3.2cm}|C{2.0cm}|L{5.0cm}|",
+        ["Parameter", "Value", "Unit", "Reference / Remark"],
+        [[r"\textnormal{Footpath Live Load}", fp_val, r"kN/m\textsuperscript{2}", _tex(fp_ref)]],
+        caption="Live Loads (LL) --- Footpath Loading")
+
+    return "\n\\vspace{1em}\n".join([t_vehicle, t_assoc, t_foot])
+
+
 def ch3_loads(input_dict):
     # Live load vehicle names mapping
     vehicles = []
@@ -266,6 +342,8 @@ def ch3_loads(input_dict):
 
     lc_rows_str = "\n".join(lc_rows)
 
+    _ll_tables = _live_load_tables(input_dict, vehicles)
+
     return r"""
 \chapter{Loads and Load Combinations}
 
@@ -300,20 +378,7 @@ This section summarizes all loads applied to the bridge and the load combination
 \end{longtable}
 
 \vspace{1em}
-\begin{longtable}{|L{5.5cm}|p{10.0cm}|}
-\caption{\textbf{Live Loads (LL)}}
-\hline
-\textbf{parameter} & \textbf{value} \\
-\hline
-\textnormal{Vehicles Considered} & """ + _tex(vehicles_str) + r""" \\[6pt]
-\hline
-\textnormal{Impact Factor (IRC 6)} & """ + _tex(impact_factor_str) + r""" \\[6pt]
-\hline
-\textnormal{Braking Load (IRC 6)} & """ + _tex(braking_force_str) + r""" \\[6pt]
-\hline
-\textnormal{Footpath Live Load (if applicable)} & """ + (_render_value(input_dict, KEY_LL_FOOTPATH_PRESSURE_VALUE, ' kN/m\\textsuperscript{2}')) + r""" \\[6pt]
-\hline
-\end{longtable}
+""" + _ll_tables + r"""
 
 \vspace{1em}
 \begin{longtable}{|L{5.5cm}|p{10.0cm}|}

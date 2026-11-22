@@ -1,4 +1,27 @@
-def ch7_quantities(input_dict):
+import os
+from osdagbridge.core.reports import charts
+
+
+def _quantity_charts_tex(input_dict, chart_dir):
+    """Material-quantity bar charts (auto-saved PNGs embedded as LaTeX figures).
+    Skips any chart whose data is missing ("N.A."); never raises."""
+    if not chart_dir:
+        return ""
+    out = ""
+    try:
+        if charts.steel_quantity_chart(input_dict, os.path.join(chart_dir, "steel_quantities.png")):
+            out += charts.figure_tex("charts/steel_quantities.png",
+                                     "Structural steel tonnage by member group (MT).")
+        if charts.concrete_rebar_chart(input_dict, os.path.join(chart_dir, "concrete_rebar.png")):
+            out += charts.figure_tex("charts/concrete_rebar.png",
+                                     "Deck concrete volume (m\\textsuperscript{3}) and reinforcement steel weight (MT).")
+    except Exception:
+        return ""
+    return out
+
+
+def ch7_quantities(input_dict, chart_dir=None):
+    _charts_tex = _quantity_charts_tex(input_dict, chart_dir)
     return r"""
 \chapter{Material Take-off \& Quantity Summary}
 \label{ch:material-takeoff}
@@ -28,6 +51,8 @@ def ch7_quantities(input_dict):
 6 & Crash Barrier & """ + str(input_dict.get("crash_barrier_vol_formula", "N.A.")) + r""" & """ + str(input_dict.get("crash_barrier_qty", "N.A.")) + r""" & """ + str(input_dict.get("crash_barrier_vol_total", "N.A.")) + r""" & """ + str(input_dict.get("crash_barrier_wt_single", "N.A.")) + r""" & """ + str(input_dict.get("crash_barrier_wt_total", "N.A.")) + r""" \\
 \hline
 \end{longtable}
-"""
-
-
+""" + (
+    r"""
+\section*{Quantity Charts}
+""" + _charts_tex if _charts_tex else ""
+)
